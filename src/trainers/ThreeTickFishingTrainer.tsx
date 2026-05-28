@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { RunStats } from '../components/RunStats'
 import { TrainerControls } from '../components/TrainerControls'
 import { TrainerHeader } from '../components/TrainerHeader'
@@ -8,17 +8,22 @@ import { BASE_TICK_MS, clamp, segmentProgress } from '../utils'
 import { findTrainer } from './registry'
 import type { ActionDefinition } from './types'
 
-type ActionId = 'mix' | 'spot'
+type ActionId = 'paste' | 'herb' | 'spot'
 
 const TRAINER_ID = 'threeTickFishing'
 const GRID_WIDTH = 14
 const GRID_HEIGHT = 10
 
 const ACTIONS: Record<ActionId, ActionDefinition> = {
-  mix: {
-    label: 'Mix herb + tar',
+  paste: {
+    label: 'Tap swamp paste',
+    icon: 'https://static.runelite.net/cache/item/icon/1941.png',
+    description: 'Select the swamp paste in your inventory.',
+  },
+  herb: {
+    label: 'Use on herb',
     icon: 'https://static.runelite.net/cache/item/icon/249.png',
-    description: 'Use guam leaf with swamp tar in the same tick.',
+    description: 'Use the selected swamp paste on the guam leaf.',
   },
   spot: {
     label: 'Click fishing spot',
@@ -27,7 +32,7 @@ const ACTIONS: Record<ActionId, ActionDefinition> = {
   },
 }
 
-const PATTERN: ActionId[][] = [['mix', 'spot'], [], ['spot']]
+const PATTERN: ActionId[][] = [['paste'], ['herb'], ['spot']]
 
 function randomStep() {
   return Math.floor(Math.random() * 5) - 2
@@ -38,6 +43,11 @@ interface ThreeTickFishingTrainerProps {
   onBack: () => void
 }
 
+interface InventoryPosition {
+  right: number
+  bottom: number
+}
+
 export function ThreeTickFishingTrainer({ cursor, onBack }: ThreeTickFishingTrainerProps) {
   const trainerMeta = findTrainer(TRAINER_ID)
 
@@ -46,6 +56,10 @@ export function ThreeTickFishingTrainer({ cursor, onBack }: ThreeTickFishingTrai
   const [visualVisibility, setVisualVisibility] = useState(1)
   const [autoScale, setAutoScale] = useState(true)
   const [spot, setSpot] = useState({ x: 8, y: 4 })
+  const [selectedSlot, setSelectedSlot] = useState<ActionId | null>(null)
+  const [inventoryPos, setInventoryPos] = useState<InventoryPosition>({ right: 8, bottom: 8 })
+  const [isDragging, setIsDragging] = useState(false)
+  const dragOffsetRef = useRef<{ pointerX: number; pointerY: number; right: number; bottom: number } | null>(null)
 
   // Difficulty / tick speed / volumes are derived from the engine's current
   // streak. The engine takes tickMs as input, so updating streak naturally
@@ -109,6 +123,86 @@ export function ThreeTickFishingTrainer({ cursor, onBack }: ThreeTickFishingTrai
       ({ x, y }) => x >= 0 && x < GRID_WIDTH && y >= 0 && y < GRID_HEIGHT,
     )
   }, [spot.x, spot.y])
+
+  const handleInventoryItemClick = useCallback(
+    (action: ActionId, event: React.MouseEvent<HTMLButtonElement>) => {
+      // Alt+click is reserved for dragging the inventory panel.
+      if (event.altKey) {
+        return
+      }
+      engine.handleAction(action)
+      // Mirror OSRS "selected item" indicator: clicking paste flags it, the
+      // follow-up herb click consumes the selection.
+      if (action === 'paste') {
+        setSelectedSlot((prev) => (prev === 'paste' ? null : 'paste'))
+      } else if (action === 'herb') {
+        setSelectedSlot(null)
+      }
+    },
+    [engine],
+  )
+
+  // Reset the selection indicator whenever a run starts/stops so stale state
+  // from a previous attempt doesn't carry over visually. Done during render to
+  // avoid a redundant effect (mirrors how engineInputs is reconciled above).
+  const [trackedActive, setTrackedActive] = useState(engine.active)
+  if (trackedActive !== engine.active) {
+    setTrackedActive(engine.active)
+    if (!engine.active) {
+      setSelectedSlot(null)
+    }
+  }
+
+  const handleInventoryPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLElement>) => {
+      if (!event.altKey) {
+        return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      const target = event.currentTarget
+      target.setPointerCapture(event.pointerId)
+      dragOffsetRef.current = {
+        pointerX: event.clientX,
+        pointerY: event.clientY,
+        right: inventoryPos.right,
+        bottom: inventoryPos.bottom,
+      }
+      setIsDragging(true)
+    },
+    [inventoryPos.bottom, inventoryPos.right],
+  )
+
+  const handleInventoryPointerMove = useCallback(
+    (event: React.PointerEvent<HTMLElement>) => {
+      const start = dragOffsetRef.current
+      if (!start) {
+        return
+      }
+      const dx = event.clientX - start.pointerX
+      const dy = event.clientY - start.pointerY
+      setInventoryPos({
+        right: Math.max(0, start.right - dx),
+        bottom: Math.max(0, start.bottom - dy),
+      })
+    },
+    [],
+  )
+
+  const handleInventoryPointerUp = useCallback(
+    (event: React.PointerEvent<HTMLElement>) => {
+      if (!dragOffsetRef.current) {
+        return
+      }
+      dragOffsetRef.current = null
+      setIsDragging(false)
+      const target = event.currentTarget
+      if (target.hasPointerCapture(event.pointerId)) {
+        target.releasePointerCapture(event.pointerId)
+      }
+    },
+    [],
+  )
 
   const shareBest = async () => {
     const text = `My best ${trainerMeta?.name ?? '3-tick fishing'} streak is ${engine.bestStreak} ticks on 3trick!`
@@ -184,8 +278,16 @@ export function ThreeTickFishingTrainer({ cursor, onBack }: ThreeTickFishingTrai
           )}
         </div>
 
-        <aside className="inventory" aria-label="Inventory">
-          <div className="inventory-title">Inventory</div>
+        <aside
+          className={`inventory ${isDragging ? 'dragging' : ''}`}
+          aria-label="Inventory"
+          style={{ right: inventoryPos.right, bottom: inventoryPos.bottom }}
+          onPointerDown={handleInventoryPointerDown}
+          onPointerMove={handleInventoryPointerMove}
+          onPointerUp={handleInventoryPointerUp}
+          onPointerCancel={handleInventoryPointerUp}
+        >
+          <div className="inventory-title">Inventory (Alt+drag to move)</div>
           <div className="inventory-grid">
             {Array.from({ length: 28 }).map((_, index) => {
               if (index === 0) {
@@ -194,7 +296,7 @@ export function ThreeTickFishingTrainer({ cursor, onBack }: ThreeTickFishingTrai
                     key={index}
                     type="button"
                     className="slot item"
-                    onClick={() => engine.handleAction('mix')}
+                    onClick={(event) => handleInventoryItemClick('herb', event)}
                   >
                     <img src="https://static.runelite.net/cache/item/icon/249.png" alt="Guam leaf" />
                   </button>
@@ -206,10 +308,10 @@ export function ThreeTickFishingTrainer({ cursor, onBack }: ThreeTickFishingTrai
                   <button
                     key={index}
                     type="button"
-                    className="slot item"
-                    onClick={() => engine.handleAction('mix')}
+                    className={`slot item ${selectedSlot === 'paste' ? 'selected' : ''}`}
+                    onClick={(event) => handleInventoryItemClick('paste', event)}
                   >
-                    <img src="https://static.runelite.net/cache/item/icon/1939.png" alt="Swamp tar" />
+                    <img src="https://static.runelite.net/cache/item/icon/1941.png" alt="Swamp paste" />
                   </button>
                 )
               }

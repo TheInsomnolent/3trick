@@ -88,7 +88,7 @@ button:disabled {
 .controls label {
   display: grid;
   gap: 0.2rem;
-  font-size: 0.9rem;
+  font-size: 1rem;
 }
 
 .controls .toggle {
@@ -117,7 +117,7 @@ button:disabled {
 }
 
 .tick-label {
-  font-size: 0.85rem;
+  font-size: 1rem;
   margin-bottom: 0.3rem;
 }
 
@@ -134,7 +134,7 @@ button:disabled {
   border-radius: 4px;
   border: 1px solid #605338;
   padding: 0.25rem;
-  font-size: 0.8rem;
+  font-size: 0.95rem;
   background: #2c261d;
 }
 
@@ -155,7 +155,7 @@ button:disabled {
 }
 
 .wait {
-  font-size: 0.8rem;
+  font-size: 0.95rem;
   opacity: 0.85;
 }
 
@@ -166,20 +166,20 @@ button:disabled {
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(14, minmax(34px, 1fr));
+  grid-template-columns: repeat(14, 1fr);
   gap: 2px;
   background: #0e2616;
   border: 1px solid #324836;
-  border-radius: 6px;
   padding: 0.35rem;
 }
 
 .tile {
-  min-height: 40px;
-  font-size: 0.6rem;
+  aspect-ratio: 1;
+  font-size: 0.7rem;
   color: #b9dbc2;
   border: 1px solid #2f4f3b;
   background: rgba(31, 78, 47, 0.5);
+  border-radius: 0;
 }
 
 .tile.semi {
@@ -197,16 +197,23 @@ button:disabled {
   position: absolute;
   right: 0.5rem;
   bottom: 0.5rem;
-  width: 210px;
+  width: 230px;
   background: #332c22;
   border: 2px solid #7d6640;
   border-radius: 8px;
   padding: 0.45rem;
+  cursor: auto;
+  user-select: none;
+  touch-action: none;
+}
+
+.inventory.dragging {
+  cursor: grabbing;
 }
 
 .inventory-title {
   margin-bottom: 0.35rem;
-  font-size: 0.9rem;
+  font-size: 1rem;
 }
 
 .inventory-grid {
@@ -219,17 +226,25 @@ button:disabled {
   aspect-ratio: 1;
   border: 1px solid #695638;
   background: #1d1a16;
+  cursor: auto;
 }
 
 .slot.item {
   display: grid;
   place-items: center;
+  cursor: pointer;
 }
 
 .slot img {
   width: 30px;
   height: 30px;
   image-rendering: pixelated;
+  border: 1px solid transparent;
+  padding: 0;
+}
+
+.slot.selected img {
+  border: 1px solid #ffffff;
 }
 
 .stats {
