@@ -59,6 +59,13 @@ interface GridSimProps {
   respawnMs?: number
   /** Called when the active spot tile is clicked. */
   onSpotClick: () => void
+  /**
+   * Called when the player's "harvesting" state changes. The player is
+   * harvesting when they are orthogonally adjacent to the currently-active
+   * spot AND that spot is the user's current interaction target (i.e. they
+   * clicked the spot to walk to it).
+   */
+  onHarvestingChange?: (harvesting: boolean) => void
 }
 
 interface CameraState {
@@ -149,7 +156,8 @@ function TerrainTiles({
 /**
  * Transparent ground plane covering the whole grid. Used as a single click
  * target so we can raycast the camera ray to the ground (Y=0) and snap the
- * hit point to the integer tile under it.
+ * hit point to the integer tile under it. Alt+left clicks are ignored so
+ * the surrounding container can use them to orbit the camera.
  */
 function ClickPlane({
   width,
@@ -163,6 +171,7 @@ function ClickPlane({
   const handle = useCallback(
     (event: ThreeEvent<MouseEvent>) => {
       if (event.nativeEvent.button !== 0) return
+      if (event.nativeEvent.altKey) return // alt+left-click is camera orbit
       event.stopPropagation()
       // Snap hit point to the integer 1x1 grid (Math.floor per spec).
       const x = Math.floor(event.point.x)
@@ -265,6 +274,7 @@ export function GridSim({
   paused = false,
   respawnMs = 10_000,
   onSpotClick,
+  onHarvestingChange,
 }: GridSimProps) {
   const dims: GridDimensions = useMemo(() => ({ width, height }), [width, height])
 
@@ -273,6 +283,10 @@ export function GridSim({
   const [spot, setSpot] = useState<Position | null>(() =>
     pickSpawnTile(dims, terrain, spawnRule, null),
   )
+  // Tile the user most-recently clicked the spot at. When this equals the
+  // current spot AND the player is adjacent to it, the player is considered
+  // "harvesting" (see onHarvestingChange).
+  const [interactionSpot, setInteractionSpot] = useState<Position | null>(null)
 
   // Camera orbit/zoom state lives in a ref so input handlers can mutate it
   // every animation frame without re-rendering the React tree.
@@ -356,6 +370,10 @@ export function GridSim({
       // Acceptance criterion: clicking the ground logs an integer-snapped target.
       console.log(`[3trick] move target -> (${x}, ${y})`)
       if (spot && spot.x === x && spot.y === y) {
+        // OSRS-style "use spot" intent: record the interaction target and
+        // walk to the closest walkable tile adjacent to the spot (findPath
+        // already retargets unwalkable destinations to a walkable neighbour).
+        setInteractionSpot({ x, y })
         onSpotClick()
         setPath(findPath(player, { x, y }, dims, terrain))
         return
@@ -363,17 +381,53 @@ export function GridSim({
       if (terrain(x, y) !== 'land') {
         return
       }
+      // Walking somewhere else cancels any in-flight spot interaction so the
+      // player stops "harvesting" the moment they choose to walk away.
+      setInteractionSpot(null)
       setPath(findPath(player, { x, y }, dims, terrain))
     },
     [spot, onSpotClick, dims, terrain, player],
   )
 
-  // --- Camera input: middle-mouse orbit + scroll-wheel zoom. ---
+  // Drop the interaction target if the spot it referred to is no longer the
+  // active one (e.g. the spot respawned somewhere else). The player will need
+  // to click the new spot to resume harvesting. Done during render (matching
+  // the trackedActive pattern in the trainers) to avoid an effect that calls
+  // setState synchronously.
+  if (
+    interactionSpot &&
+    (!spot || spot.x !== interactionSpot.x || spot.y !== interactionSpot.y)
+  ) {
+    setInteractionSpot(null)
+  }
+
+  // Derive harvesting state: player is orthogonally adjacent to the active
+  // spot AND that spot is the current interaction target. Notify the trainer
+  // whenever it transitions so it can gate the tick engine.
+  const harvesting =
+    !!spot &&
+    !!interactionSpot &&
+    spot.x === interactionSpot.x &&
+    spot.y === interactionSpot.y &&
+    Math.abs(player.x - spot.x) + Math.abs(player.y - spot.y) === 1
+  const lastHarvestingRef = useRef(false)
+  useEffect(() => {
+    if (lastHarvestingRef.current !== harvesting) {
+      lastHarvestingRef.current = harvesting
+      onHarvestingChange?.(harvesting)
+    }
+  }, [harvesting, onHarvestingChange])
+
+  // --- Camera input: middle-mouse or alt+left orbit, scroll-wheel zoom,
+  // and arrow-key tilt / pan. ---
   const containerRef = useRef<HTMLDivElement>(null)
   const orbitStateRef = useRef<{ pointerId: number; lastX: number; lastY: number } | null>(null)
 
   const onPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 1) return // middle mouse only
+    // Middle mouse OR Alt + left mouse begins an orbit drag.
+    const isMiddle = event.button === 1
+    const isAltLeft = event.button === 0 && event.altKey
+    if (!isMiddle && !isAltLeft) return
     event.preventDefault()
     event.currentTarget.setPointerCapture(event.pointerId)
     orbitStateRef.current = {
@@ -418,6 +472,32 @@ export function GridSim({
     return () => el.removeEventListener('wheel', handler)
   }, [])
 
+  // Arrow keys: left/right pan yaw, up/down tilt pitch. Matches OSRS where
+  // the arrow keys move the camera around the player. Steps are in Jagex's
+  // 2048-unit circle, so 32 ≈ 360 * 32 / 2048 ≈ 5.6° per keystroke.
+  const ARROW_YAW_STEP = 32
+  const ARROW_PITCH_STEP = 24
+  const onKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    const cs = cameraStateRef.current
+    switch (event.key) {
+      case 'ArrowLeft':
+        cs.yaw = ((cs.yaw + ARROW_YAW_STEP) % 2048 + 2048) % 2048
+        break
+      case 'ArrowRight':
+        cs.yaw = ((cs.yaw - ARROW_YAW_STEP) % 2048 + 2048) % 2048
+        break
+      case 'ArrowUp':
+        cs.pitch = clamp(cs.pitch - ARROW_PITCH_STEP, PITCH_MIN_JAGEX, PITCH_MAX_JAGEX)
+        break
+      case 'ArrowDown':
+        cs.pitch = clamp(cs.pitch + ARROW_PITCH_STEP, PITCH_MIN_JAGEX, PITCH_MAX_JAGEX)
+        break
+      default:
+        return
+    }
+    event.preventDefault()
+  }, [])
+
   // Suppress the browser autoscroll cursor that middle-click triggers.
   const onAuxClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (event.button === 1) event.preventDefault()
@@ -430,12 +510,15 @@ export function GridSim({
       ref={containerRef}
       className="grid-viewport"
       style={{ width: VIEW_WIDTH, height: VIEW_HEIGHT, touchAction: 'none' }}
+      tabIndex={0}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
       onAuxClick={onAuxClick}
       onContextMenu={(e) => e.preventDefault()}
+      onKeyDown={onKeyDown}
+      onMouseEnter={(e) => e.currentTarget.focus({ preventScroll: true })}
     >
       <Canvas
         camera={{ fov: CAMERA_FOV, near: 0.1, far: 1000, position: [0, 10, 10] }}

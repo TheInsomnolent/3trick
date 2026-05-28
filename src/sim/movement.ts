@@ -5,11 +5,17 @@ function key(x: number, y: number) {
 }
 
 /**
- * Breadth-first search across walkable (land) tiles. Returns the full path
- * from `from` to `to`, exclusive of `from`. If `to` itself is not walkable
- * (e.g. the player clicked a water tile or the fishing spot), we instead
- * path to the closest walkable neighbour of `to`, which matches how RuneScape
- * resolves "move next to" intents.
+ * OSRS-style breadth-first search across walkable (land) tiles. Returns the
+ * full path from `from` to `to`, exclusive of `from`.
+ *
+ * Mirrors the pathfinder described on the OSRS Wiki
+ * (https://oldschool.runescape.wiki/w/Pathfinding):
+ *   - Players may walk in any of 8 directions (4 orthogonal + 4 diagonal).
+ *   - A diagonal step is only permitted when both flanking orthogonal tiles
+ *     are walkable, i.e. no corner cutting around a blocked tile.
+ *   - If the destination tile itself is not walkable (e.g. the player clicked
+ *     a water tile or the fishing spot), we retarget to the closest walkable
+ *     neighbour so the player at least walks up to the shoreline.
  */
 export function findPath(
   from: Position,
@@ -29,24 +35,33 @@ export function findPath(
     terrain(p.x, p.y) === 'land'
 
   // If the destination is unwalkable, retarget to the closest walkable
-  // neighbour so the player at least walks up to the shoreline.
+  // neighbour (orthogonal or diagonal) so the player at least walks up to
+  // the shoreline. Diagonal neighbours obey the no-corner-cutting rule.
   let target = to
   if (!walkable(to)) {
-    const neighbours: Position[] = [
-      { x: to.x - 1, y: to.y },
-      { x: to.x + 1, y: to.y },
-      { x: to.x, y: to.y - 1 },
-      { x: to.x, y: to.y + 1 },
-    ].filter(walkable)
-    if (neighbours.length === 0) {
+    const candidates: Position[] = []
+    for (let dy = -1; dy <= 1; dy += 1) {
+      for (let dx = -1; dx <= 1; dx += 1) {
+        if (dx === 0 && dy === 0) continue
+        const n = { x: to.x + dx, y: to.y + dy }
+        if (!walkable(n)) continue
+        if (dx !== 0 && dy !== 0) {
+          // No corner cutting: both orthogonal flankers must be walkable.
+          if (!walkable({ x: to.x + dx, y: to.y })) continue
+          if (!walkable({ x: to.x, y: to.y + dy })) continue
+        }
+        candidates.push(n)
+      }
+    }
+    if (candidates.length === 0) {
       return []
     }
-    neighbours.sort(
+    candidates.sort(
       (a, b) =>
-        Math.abs(a.x - from.x) + Math.abs(a.y - from.y) -
-        (Math.abs(b.x - from.x) + Math.abs(b.y - from.y)),
+        Math.max(Math.abs(a.x - from.x), Math.abs(a.y - from.y)) -
+        Math.max(Math.abs(b.x - from.x), Math.abs(b.y - from.y)),
     )
-    target = neighbours[0]
+    target = candidates[0]
   }
 
   if (!walkable(from)) {
@@ -71,22 +86,24 @@ export function findPath(
       }
       return path.reverse()
     }
-    const candidates: Position[] = [
-      { x: current.x - 1, y: current.y },
-      { x: current.x + 1, y: current.y },
-      { x: current.x, y: current.y - 1 },
-      { x: current.x, y: current.y + 1 },
-    ]
-    for (const next of candidates) {
-      if (!walkable(next)) {
-        continue
+    // Expand all 8 neighbours, but reject diagonals that would cut a corner
+    // around a blocked tile (RuneScape rule).
+    for (let dy = -1; dy <= 1; dy += 1) {
+      for (let dx = -1; dx <= 1; dx += 1) {
+        if (dx === 0 && dy === 0) continue
+        const next = { x: current.x + dx, y: current.y + dy }
+        if (!walkable(next)) continue
+        if (dx !== 0 && dy !== 0) {
+          if (!walkable({ x: current.x + dx, y: current.y })) continue
+          if (!walkable({ x: current.x, y: current.y + dy })) continue
+        }
+        const k = key(next.x, next.y)
+        if (cameFrom.has(k)) {
+          continue
+        }
+        cameFrom.set(k, current)
+        queue.push(next)
       }
-      const k = key(next.x, next.y)
-      if (cameFrom.has(k)) {
-        continue
-      }
-      cameFrom.set(k, current)
-      queue.push(next)
     }
   }
 

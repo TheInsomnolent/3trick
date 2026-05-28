@@ -8,10 +8,22 @@ interface UseTickEngineOptions<ActionId extends string> {
   tickMs: number
   tickOneVolume: number
   otherTickVolume: number
+  /**
+   * When true, the tick interval is suspended without resetting the run
+   * state. Used to gate ticks on gameplay state (e.g. only count ticks
+   * while the player is actually harvesting a fishing spot).
+   */
+  paused?: boolean
 }
 
 export interface TickEngine<ActionId extends string> {
   active: boolean
+  /** True once the user has started a run AND the count-in is finished. */
+  started: boolean
+  /**
+   * True when ticks are actively advancing (i.e. `started` AND not paused).
+   * Used by UI like the metronome to indicate that a tick cycle is in flight.
+   */
   isRunning: boolean
   countdown: number
   currentTick: number
@@ -34,6 +46,7 @@ export function useTickEngine<ActionId extends string>({
   tickMs,
   tickOneVolume,
   otherTickVolume,
+  paused = false,
 }: UseTickEngineOptions<ActionId>): TickEngine<ActionId> {
   const [active, setActive] = useState(false)
   const [heartbeats, setHeartbeats] = useState(0)
@@ -58,8 +71,11 @@ export function useTickEngine<ActionId extends string>({
   }, [pattern])
 
   const countdown = active ? Math.max(0, COUNT_IN_TICKS - heartbeats) : 0
-  const isRunning = active && countdown === 0
-  const currentTick = isRunning ? heartbeats - COUNT_IN_TICKS : 0
+  const started = active && countdown === 0
+  const isRunning = started && !paused
+  // currentTick is anchored to heartbeats so it stays stable across pauses
+  // (the metronome / pattern position doesn't reset when ticks pause).
+  const currentTick = started ? heartbeats - COUNT_IN_TICKS : 0
   const requiredActions = useMemo(
     () => pattern[currentTick % pattern.length] ?? [],
     [pattern, currentTick],
@@ -126,7 +142,9 @@ export function useTickEngine<ActionId extends string>({
   )
 
   useEffect(() => {
-    if (!active) {
+    // Count-in always proceeds; we only pause AFTER the run has started so
+    // gating ticks on harvesting state can't deadlock the count-in.
+    if (!active || (started && paused)) {
       return
     }
 
@@ -187,7 +205,7 @@ export function useTickEngine<ActionId extends string>({
     }, tickMs)
 
     return () => window.clearInterval(timer)
-  }, [active, playTick, scheduleSubticks, tickMs])
+  }, [active, paused, started, playTick, scheduleSubticks, tickMs])
 
   const handleAction = useCallback(
     (action: ActionId) => {
@@ -247,6 +265,7 @@ export function useTickEngine<ActionId extends string>({
 
   return {
     active,
+    started,
     isRunning,
     countdown,
     currentTick,
