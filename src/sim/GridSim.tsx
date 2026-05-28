@@ -50,10 +50,6 @@ const CAMERA_FOV = 45
 const VIEW_WIDTH = 720
 const VIEW_HEIGHT = 480
 
-// The mock entity (acceptance criteria) must interpolate between two integer
-// tiles over EXACTLY 600ms regardless of trainer tick speed.
-const MOCK_TICK_MS = 600
-
 interface GridSimProps {
   width: number
   height: number
@@ -129,10 +125,10 @@ function OSRSCameraRig({
     if (keys.size > 0) {
       const yawSpeed = 720 * delta
       const pitchSpeed = 480 * delta
-      if (keys.has('ArrowLeft')) cs.yaw += yawSpeed
-      if (keys.has('ArrowRight')) cs.yaw -= yawSpeed
-      if (keys.has('ArrowUp')) cs.pitch -= pitchSpeed
-      if (keys.has('ArrowDown')) cs.pitch += pitchSpeed
+      if (keys.has('ArrowLeft')) cs.yaw -= yawSpeed
+      if (keys.has('ArrowRight')) cs.yaw += yawSpeed
+      if (keys.has('ArrowUp')) cs.pitch += pitchSpeed
+      if (keys.has('ArrowDown')) cs.pitch -= pitchSpeed
       cs.yaw = ((cs.yaw % 2048) + 2048) % 2048
       cs.pitch = clamp(cs.pitch, PITCH_MIN_JAGEX, PITCH_MAX_JAGEX)
     }
@@ -388,24 +384,27 @@ function TrueTileMarker({ tile }: { tile: Position }) {
 }
 
 /**
- * Mock entity demonstrating decoupled-from-state interpolation: ping-pongs
- * between two fixed integer tiles, completing each leg in EXACTLY 600ms.
+ * Highlights the tile the player is currently walking to (the last tile of
+ * the queued path). Same outline style as the true-tile marker but drawn at
+ * half the opacity so it reads as a softer "destination" hint.
  */
-function MockEntity({ tileA, tileB }: { tileA: Position; tileB: Position }) {
-  const meshRef = useRef<THREE.Mesh>(null!)
-  useFrame(() => {
-    const now = performance.now()
-    const phase = (now % (MOCK_TICK_MS * 2)) / MOCK_TICK_MS // 0..2
-    const t = phase <= 1 ? phase : 2 - phase
-    const x = tileA.x + (tileB.x - tileA.x) * t + 0.5
-    const z = tileA.y + (tileB.y - tileA.y) * t + 0.5
-    meshRef.current.position.set(x, 0.3, z)
-  })
+function TargetTileMarker({ tile }: { tile: Position }) {
   return (
-    <mesh ref={meshRef}>
-      <sphereGeometry args={[0.25, 16, 16]} />
-      <meshStandardMaterial color="#ff6ad5" emissive="#5a1a44" />
-    </mesh>
+    <group position={[tile.x + 0.5, 0.03, tile.y + 0.5]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[0.96, 0.96]} />
+        <meshBasicMaterial
+          color="#ffffff"
+          transparent
+          opacity={0.09}
+          depthWrite={false}
+        />
+      </mesh>
+      <lineSegments rotation={[-Math.PI / 2, 0, 0]}>
+        <edgesGeometry args={[new THREE.PlaneGeometry(0.96, 0.96)]} />
+        <lineBasicMaterial color="#ffffff" transparent opacity={0.5} />
+      </lineSegments>
+    </group>
   )
 }
 
@@ -722,6 +721,7 @@ export function GridSim({
         <TerrainTiles width={width} height={height} terrain={terrain} />
         {spot && <SpotMarker spot={spot} water={spotIsWater} />}
         <TrueTileMarker tile={player} />
+        {path.length > 0 && <TargetTileMarker tile={path[path.length - 1]} />}
         <Suspense
           fallback={
             <PlayerMeshFallback
@@ -735,7 +735,6 @@ export function GridSim({
             targetRef={cameraTargetRef}
           />
         </Suspense>
-        <MockEntity tileA={{ x: 1, y: 1 }} tileB={{ x: 4, y: 1 }} />
         <ClickPlane width={width} height={height} onTilePicked={handleTilePicked} />
         <OSRSCameraRig
           targetRef={cameraTargetRef}

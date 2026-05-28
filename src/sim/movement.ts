@@ -4,6 +4,26 @@ function key(x: number, y: number) {
   return `${x},${y}`
 }
 
+// Neighbour offsets used by the BFS expansion below. Orthogonals come first
+// so that equal-length paths (e.g. walking due north across open ground)
+// resolve to a straight line instead of zig-zagging through diagonals.
+const ORTHOGONAL_OFFSETS: ReadonlyArray<[number, number]> = [
+  [0, -1],
+  [1, 0],
+  [0, 1],
+  [-1, 0],
+]
+const DIAGONAL_OFFSETS: ReadonlyArray<[number, number]> = [
+  [1, -1],
+  [1, 1],
+  [-1, 1],
+  [-1, -1],
+]
+const NEIGHBOUR_OFFSETS: ReadonlyArray<[number, number]> = [
+  ...ORTHOGONAL_OFFSETS,
+  ...DIAGONAL_OFFSETS,
+]
+
 /**
  * OSRS-style breadth-first search across walkable (land) tiles. Returns the
  * full path from `from` to `to`, exclusive of `from`.
@@ -87,23 +107,23 @@ export function findPath(
       return path.reverse()
     }
     // Expand all 8 neighbours, but reject diagonals that would cut a corner
-    // around a blocked tile (RuneScape rule).
-    for (let dy = -1; dy <= 1; dy += 1) {
-      for (let dx = -1; dx <= 1; dx += 1) {
-        if (dx === 0 && dy === 0) continue
-        const next = { x: current.x + dx, y: current.y + dy }
-        if (!walkable(next)) continue
-        if (dx !== 0 && dy !== 0) {
-          if (!walkable({ x: current.x + dx, y: current.y })) continue
-          if (!walkable({ x: current.x, y: current.y + dy })) continue
-        }
-        const k = key(next.x, next.y)
-        if (cameFrom.has(k)) {
-          continue
-        }
-        cameFrom.set(k, current)
-        queue.push(next)
+    // around a blocked tile (RuneScape rule). Orthogonal neighbours are
+    // enqueued before diagonal ones so that, when several equal-length
+    // paths exist (e.g. walking due north across open ground), BFS prefers
+    // the straight path instead of zig-zagging through diagonals.
+    for (const [dx, dy] of NEIGHBOUR_OFFSETS) {
+      const next = { x: current.x + dx, y: current.y + dy }
+      if (!walkable(next)) continue
+      if (dx !== 0 && dy !== 0) {
+        if (!walkable({ x: current.x + dx, y: current.y })) continue
+        if (!walkable({ x: current.x, y: current.y + dy })) continue
       }
+      const k = key(next.x, next.y)
+      if (cameFrom.has(k)) {
+        continue
+      }
+      cameFrom.set(k, current)
+      queue.push(next)
     }
   }
 
