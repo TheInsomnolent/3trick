@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Canvas, useFrame, type ThreeEvent } from '@react-three/fiber'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Canvas, useFrame, useLoader, type ThreeEvent } from '@react-three/fiber'
 import * as THREE from 'three'
-import { advanceAlongPath, findPath } from './movement'
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
+import { findPath } from './movement'
 import type {
   GridDimensions,
   Position,
@@ -9,6 +10,7 @@ import type {
   TerrainGetter,
 } from './types'
 import { pickSpawnTile } from './terrain'
+import playerFbxUrl from '../assets/Default_OSRS_Model.fbx?url'
 
 // --- OSRS 3D world constants (see Improvements Batch 4 spec) ---
 // 1 unit = 1 OSRS tile. Jagex coords are 128 units per tile.
@@ -28,6 +30,16 @@ const PITCH_MAX_JAGEX = 512
 // Zoom is a radius in tile units; FOV stays fixed per spec.
 const ZOOM_MIN = 3
 const ZOOM_MAX = 25
+
+// Arrow keys held in the viewport rotate the camera around the player; we
+// track them in a Set keyed by KeyboardEvent.key so the camera rig can
+// apply continuous rotation per frame.
+const ARROW_KEYS: ReadonlySet<string> = new Set([
+  'ArrowLeft',
+  'ArrowRight',
+  'ArrowUp',
+  'ArrowDown',
+])
 
 const DEFAULT_PITCH_JAGEX = 280
 const DEFAULT_YAW_JAGEX = 0
@@ -77,10 +89,20 @@ interface CameraState {
   zoom: number
 }
 
+interface PlayerSegment {
+  from: Position
+  to: Position
+  /** Absolute performance.now() time, in ms, at which this segment starts. */
+  startMs: number
+  /** Segment duration in ms (== tickMs / tilesPerTick of the originating tick). */
+  durMs: number
+}
+
 interface PlayerTickState {
-  prev: Position
-  current: Position
-  startedAt: number
+  /** Most recent tile the player came to rest on (when no segments are queued). */
+  rest: Position
+  /** FIFO queue of in-flight movement segments. */
+  segments: PlayerSegment[]
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -91,12 +113,30 @@ function clamp(value: number, min: number, max: number) {
 function OSRSCameraRig({
   targetRef,
   cameraStateRef,
+  arrowKeysRef,
 }: {
   targetRef: React.MutableRefObject<THREE.Vector3>
   cameraStateRef: React.MutableRefObject<CameraState>
+  arrowKeysRef: React.MutableRefObject<Set<string>>
 }) {
-  useFrame((state) => {
+  useFrame((state, delta) => {
     const cs = cameraStateRef.current
+
+    // Smooth, continuous arrow-key camera rotation. Speeds are in Jagex
+    // units per second so they feel snappy at any framerate. 720 Jagex
+    // units/s ≈ 126°/s yaw and 480 ≈ 84°/s pitch.
+    const keys = arrowKeysRef.current
+    if (keys.size > 0) {
+      const yawSpeed = 720 * delta
+      const pitchSpeed = 480 * delta
+      if (keys.has('ArrowLeft')) cs.yaw += yawSpeed
+      if (keys.has('ArrowRight')) cs.yaw -= yawSpeed
+      if (keys.has('ArrowUp')) cs.pitch -= pitchSpeed
+      if (keys.has('ArrowDown')) cs.pitch += pitchSpeed
+      cs.yaw = ((cs.yaw % 2048) + 2048) % 2048
+      cs.pitch = clamp(cs.pitch, PITCH_MIN_JAGEX, PITCH_MAX_JAGEX)
+    }
+
     const theta = cs.pitch * JAGEX_TO_RAD
     const phi = cs.yaw * JAGEX_TO_RAD
 
@@ -194,37 +234,156 @@ function ClickPlane({
 }
 
 /**
- * Player mesh. Decoupled from React state: reads the logical position from
- * refs and lerps between the previous and current tile over `tickMs`.
- * Also writes its current world position into `targetRef` so the camera rig
- * can orbit the rendered (interpolated) torso position.
+ * Advances the tick state up to the given timestamp, dropping any segments
+ * whose end time has passed and updating the resting tile. Returns the
+ * current visual position (in tile space, including the +0.5 centering) and
+ * the desired facing yaw if the player is in motion. Shared between the
+ * FBX-backed PlayerMesh and its loading fallback.
+ */
+function readTickStateAt(
+  tickState: PlayerTickState,
+  now: number,
+): { px: number; pz: number; desiredYaw: number | null } {
+  const segments = tickState.segments
+  while (segments.length > 0 && segments[0].startMs + segments[0].durMs <= now) {
+    const done = segments.shift()!
+    tickState.rest = done.to
+  }
+  if (segments.length === 0) {
+    return {
+      px: tickState.rest.x + 0.5,
+      pz: tickState.rest.y + 0.5,
+      desiredYaw: null,
+    }
+  }
+  const seg = segments[0]
+  const t = now < seg.startMs ? 0 : clamp((now - seg.startMs) / seg.durMs, 0, 1)
+  const px = seg.from.x + (seg.to.x - seg.from.x) * t + 0.5
+  const pz = seg.from.y + (seg.to.y - seg.from.y) * t + 0.5
+  const dx = seg.to.x - seg.from.x
+  const dz = seg.to.y - seg.from.y
+  const desiredYaw = dx !== 0 || dz !== 0 ? Math.atan2(dx, dz) : null
+  return { px, pz, desiredYaw }
+}
+
+/**
+ * Player model. Decoupled from React state: reads the queued movement
+ * segments from a ref and advances tile-by-tile, so multi-tile ticks
+ * (running) animate through every intermediate tile instead of cutting a
+ * diagonal across them. Also writes its current world position into
+ * `targetRef` so the camera rig can orbit the rendered torso position.
+ *
+ * The visible model is the "Default OSRS Model" FBX (see attribution in the
+ * menu screen). Loaded lazily so the rest of the scene can render while the
+ * mesh is fetched / parsed.
  */
 function PlayerMesh({
   tickStateRef,
-  tickMsRef,
   targetRef,
 }: {
   tickStateRef: React.MutableRefObject<PlayerTickState>
-  tickMsRef: React.MutableRefObject<number>
+  targetRef: React.MutableRefObject<THREE.Vector3>
+}) {
+  const groupRef = useRef<THREE.Group>(null!)
+  const fbx = useLoader(FBXLoader, playerFbxUrl)
+
+  // Clone the loaded scene so multiple GridSim instances don't share GPU
+  // resources, and scale it so the model is exactly PLAYER_HEIGHT tall with
+  // its feet on the ground (y = 0 in local space).
+  const model = useMemo(() => {
+    const cloned = fbx.clone(true)
+    const rawBox = new THREE.Box3().setFromObject(cloned)
+    const size = new THREE.Vector3()
+    rawBox.getSize(size)
+    const scale = size.y > 0 ? PLAYER_HEIGHT / size.y : 1
+    cloned.scale.setScalar(scale)
+    const scaledBox = new THREE.Box3().setFromObject(cloned)
+    cloned.position.y = -scaledBox.min.y
+    cloned.traverse((obj) => {
+      const m = obj as THREE.Mesh
+      if (m.isMesh) {
+        m.castShadow = true
+        m.receiveShadow = false
+      }
+    })
+    return cloned
+  }, [fbx])
+
+  // Smoothly rotate the model to face its current motion direction.
+  const facingYawRef = useRef(0)
+
+  useFrame((_, delta) => {
+    const { px, pz, desiredYaw } = readTickStateAt(
+      tickStateRef.current,
+      performance.now(),
+    )
+
+    // Critically-damped-ish yaw smoothing toward the desired direction.
+    if (desiredYaw !== null) {
+      let diff = desiredYaw - facingYawRef.current
+      while (diff > Math.PI) diff -= 2 * Math.PI
+      while (diff < -Math.PI) diff += 2 * Math.PI
+      const lerpAmount = clamp(delta * 12, 0, 1)
+      facingYawRef.current += diff * lerpAmount
+    }
+
+    groupRef.current.position.set(px, 0, pz)
+    groupRef.current.rotation.y = facingYawRef.current
+    targetRef.current.set(px, 0, pz)
+  })
+
+  return (
+    <group ref={groupRef}>
+      <primitive object={model} />
+    </group>
+  )
+}
+
+/** Placeholder rendered while the FBX model is still loading. */
+function PlayerMeshFallback({
+  tickStateRef,
+  targetRef,
+}: {
+  tickStateRef: React.MutableRefObject<PlayerTickState>
   targetRef: React.MutableRefObject<THREE.Vector3>
 }) {
   const meshRef = useRef<THREE.Mesh>(null!)
   useFrame(() => {
-    // Note: grid Position uses (x, y) but in our right-handed Y-up scene the
-    // grid lies on the XZ plane, so Position.y is the world Z axis.
-    const { prev, current, startedAt } = tickStateRef.current
-    const dur = Math.max(1, tickMsRef.current)
-    const t = clamp((performance.now() - startedAt) / dur, 0, 1)
-    const x = prev.x + (current.x - prev.x) * t + 0.5
-    const z = prev.y + (current.y - prev.y) * t + 0.5
-    meshRef.current.position.set(x, PLAYER_HEIGHT / 2, z)
-    targetRef.current.set(x, 0, z)
+    const { px, pz } = readTickStateAt(tickStateRef.current, performance.now())
+    meshRef.current.position.set(px, PLAYER_HEIGHT / 2, pz)
+    targetRef.current.set(px, 0, pz)
   })
   return (
     <mesh ref={meshRef} castShadow>
       <boxGeometry args={[0.6, PLAYER_HEIGHT, 0.6]} />
       <meshStandardMaterial color="#f6cb6a" />
     </mesh>
+  )
+}
+
+/**
+ * Highlights the player's "true tile" — the logical tile the game considers
+ * the player to be on, which can be up to 1 game tick (walking) or 2 game
+ * ticks (running) ahead of the visible model. Drawn as a translucent white
+ * outline on top of the terrain, matching the OSRS "True tile" overlay.
+ */
+function TrueTileMarker({ tile }: { tile: Position }) {
+  return (
+    <group position={[tile.x + 0.5, 0.04, tile.y + 0.5]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[0.96, 0.96]} />
+        <meshBasicMaterial
+          color="#ffffff"
+          transparent
+          opacity={0.18}
+          depthWrite={false}
+        />
+      </mesh>
+      <lineSegments rotation={[-Math.PI / 2, 0, 0]}>
+        <edgesGeometry args={[new THREE.PlaneGeometry(0.96, 0.96)]} />
+        <lineBasicMaterial color="#ffffff" />
+      </lineSegments>
+    </group>
   )
 }
 
@@ -300,28 +459,19 @@ export function GridSim({
     new THREE.Vector3(initialPlayer.x + 0.5, 0, initialPlayer.y + 0.5),
   )
 
-  // Player tick state: previous tile, current tile, and the time the
-  // transition began. PlayerMesh lerps between them in useFrame.
+  // Player tick state: a queue of in-flight movement segments plus the tile
+  // the model rests on when no segments are queued. PlayerMesh consumes the
+  // queue in useFrame so movement runs decoupled from React renders.
   const tickStateRef = useRef<PlayerTickState>({
-    prev: initialPlayer,
-    current: initialPlayer,
-    startedAt: 0,
+    rest: initialPlayer,
+    segments: [],
   })
-  // tickMs can change with difficulty; keep an up-to-date ref for useFrame.
+  // tickMs can change with difficulty; keep an up-to-date ref for the
+  // movement loop closure.
   const tickMsRef = useRef(tickMs)
   useEffect(() => {
     tickMsRef.current = tickMs
   }, [tickMs])
-
-  // Whenever the logical player tile updates, push the prior tile + start
-  // time into the tick state so the mesh smoothly lerps over `tickMs`.
-  useEffect(() => {
-    tickStateRef.current = {
-      prev: tickStateRef.current.current,
-      current: player,
-      startedAt: performance.now(),
-    }
-  }, [player])
 
   // Keep a path ref so the tick loop reads the freshest path without
   // re-subscribing every render.
@@ -330,29 +480,65 @@ export function GridSim({
     pathRef.current = path
   }, [path])
 
-  // Drive player movement at the tick cadence.
+  // Mirror player into a ref so the tick loop can read the latest tile
+  // without needing the setter's updater callback (which StrictMode would
+  // invoke twice, duplicating the visual segment push below).
+  const playerRef = useRef(player)
   useEffect(() => {
-    if (paused) {
-      return
-    }
+    playerRef.current = player
+  }, [player])
+
+  // Drive player movement at the tick cadence. We intentionally DO NOT gate
+  // this on `paused` so the player can wander around the grid before the
+  // trainer starts (the trainer's tick engine is what `paused` reflects).
+  useEffect(() => {
     const timer = window.setInterval(() => {
       const currentPath = pathRef.current
       if (currentPath.length === 0) {
         return
       }
-      setPlayer((current) => {
-        const { position, remaining } = advanceAlongPath(
-          current,
-          currentPath,
-          tilesPerTick,
-        )
-        pathRef.current = remaining
-        setPath(remaining)
-        return position
-      })
+      // Compute everything synchronously here (outside setPlayer's updater)
+      // so React StrictMode's double-invocation of the updater doesn't push
+      // duplicate visual segments into the tick queue.
+      const taken = Math.min(tilesPerTick, currentPath.length)
+      const steps = currentPath.slice(0, taken)
+      const remaining = currentPath.slice(taken)
+      const newPosition = steps[steps.length - 1]
+      const startTile = playerRef.current
+      pathRef.current = remaining
+      playerRef.current = newPosition
+      setPath(remaining)
+      setPlayer(newPosition)
+
+      // Queue per-tile visual segments so multi-tile (running) ticks
+      // animate through each intermediate tile instead of cutting a
+      // diagonal across them. Each segment lasts tickMs/tilesPerTick, so
+      // the model lags the true tile by ~1 tick when walking and up to
+      // ~2 ticks when running — matching OSRS character-model behaviour.
+      const ts = tickStateRef.current
+      // Guard against pathological tilesPerTick / tickMs values producing
+      // zero- or negative-duration segments (which would make the lerp NaN).
+      const stepsPerTick = Math.max(1, tilesPerTick)
+      const segDur = Math.max(1, tickMsRef.current / stepsPerTick)
+      const now = performance.now()
+      const lastSeg = ts.segments[ts.segments.length - 1]
+      const lastEnd = lastSeg ? lastSeg.startMs + lastSeg.durMs : now
+      // Chain new segments after any still-running ones so the model keeps
+      // walking smoothly rather than jumping ahead.
+      const baseStart = Math.max(now, lastEnd)
+      let from = startTile
+      for (let i = 0; i < steps.length; i += 1) {
+        ts.segments.push({
+          from,
+          to: steps[i],
+          startMs: baseStart + i * segDur,
+          durMs: segDur,
+        })
+        from = steps[i]
+      }
     }, tickMs)
     return () => window.clearInterval(timer)
-  }, [paused, tickMs, tilesPerTick])
+  }, [tickMs, tilesPerTick])
 
   // Periodically respawn the skill spot.
   useEffect(() => {
@@ -472,30 +658,32 @@ export function GridSim({
     return () => el.removeEventListener('wheel', handler)
   }, [])
 
-  // Arrow keys: left/right pan yaw, up/down tilt pitch. Matches OSRS where
-  // the arrow keys move the camera around the player. Steps are in Jagex's
-  // 2048-unit circle, so 32 ≈ 360 * 32 / 2048 ≈ 5.6° per keystroke.
-  const ARROW_YAW_STEP = 32
-  const ARROW_PITCH_STEP = 24
-  const onKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    const cs = cameraStateRef.current
-    switch (event.key) {
-      case 'ArrowLeft':
-        cs.yaw = ((cs.yaw + ARROW_YAW_STEP) % 2048 + 2048) % 2048
-        break
-      case 'ArrowRight':
-        cs.yaw = ((cs.yaw - ARROW_YAW_STEP) % 2048 + 2048) % 2048
-        break
-      case 'ArrowUp':
-        cs.pitch = clamp(cs.pitch - ARROW_PITCH_STEP, PITCH_MIN_JAGEX, PITCH_MAX_JAGEX)
-        break
-      case 'ArrowDown':
-        cs.pitch = clamp(cs.pitch + ARROW_PITCH_STEP, PITCH_MIN_JAGEX, PITCH_MAX_JAGEX)
-        break
-      default:
-        return
-    }
-    event.preventDefault()
+  // Arrow keys rotate the camera around the player. We track which arrow
+  // keys are currently held in a Set and apply continuous angular velocity
+  // each frame in the camera rig (see OSRSCameraRig). This decouples the
+  // rotation from the OS key-repeat cadence, making it smooth and quicker
+  // than per-keystroke jumps.
+  const arrowKeysRef = useRef<Set<string>>(new Set())
+  const onKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (!ARROW_KEYS.has(event.key)) return
+      arrowKeysRef.current.add(event.key)
+      event.preventDefault()
+    },
+    [],
+  )
+  const onKeyUp = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (!ARROW_KEYS.has(event.key)) return
+      arrowKeysRef.current.delete(event.key)
+      event.preventDefault()
+    },
+    [],
+  )
+  // Release any held keys if the viewport loses focus, otherwise the camera
+  // would keep rotating after the user tabs away.
+  const onBlur = useCallback(() => {
+    arrowKeysRef.current.clear()
   }, [])
 
   // Suppress the browser autoscroll cursor that middle-click triggers.
@@ -518,6 +706,8 @@ export function GridSim({
       onAuxClick={onAuxClick}
       onContextMenu={(e) => e.preventDefault()}
       onKeyDown={onKeyDown}
+      onKeyUp={onKeyUp}
+      onBlur={onBlur}
       onMouseEnter={(e) => e.currentTarget.focus({ preventScroll: true })}
     >
       <Canvas
@@ -531,14 +721,27 @@ export function GridSim({
         <directionalLight position={[10, 18, 6]} intensity={0.9} />
         <TerrainTiles width={width} height={height} terrain={terrain} />
         {spot && <SpotMarker spot={spot} water={spotIsWater} />}
-        <PlayerMesh
-          tickStateRef={tickStateRef}
-          tickMsRef={tickMsRef}
-          targetRef={cameraTargetRef}
-        />
+        <TrueTileMarker tile={player} />
+        <Suspense
+          fallback={
+            <PlayerMeshFallback
+              tickStateRef={tickStateRef}
+              targetRef={cameraTargetRef}
+            />
+          }
+        >
+          <PlayerMesh
+            tickStateRef={tickStateRef}
+            targetRef={cameraTargetRef}
+          />
+        </Suspense>
         <MockEntity tileA={{ x: 1, y: 1 }} tileB={{ x: 4, y: 1 }} />
         <ClickPlane width={width} height={height} onTilePicked={handleTilePicked} />
-        <OSRSCameraRig targetRef={cameraTargetRef} cameraStateRef={cameraStateRef} />
+        <OSRSCameraRig
+          targetRef={cameraTargetRef}
+          cameraStateRef={cameraStateRef}
+          arrowKeysRef={arrowKeysRef}
+        />
       </Canvas>
     </div>
   )
