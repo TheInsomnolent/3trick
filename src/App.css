@@ -20,6 +20,19 @@ input {
   gap: 1rem;
 }
 
+.credits {
+  margin-top: 1.5rem;
+  text-align: center;
+  font-size: 0.78rem;
+  color: #b9a577;
+  max-width: min(720px, 100%);
+}
+
+.credits a {
+  color: inherit;
+  text-decoration: underline;
+}
+
 .menu-subtitle {
   text-align: center;
   color: #d2bf95;

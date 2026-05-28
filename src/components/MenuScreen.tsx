@@ -25,6 +25,26 @@ export function MenuScreen({ trainers, onSelect }: MenuScreenProps) {
           </button>
         ))}
       </section>
+      <footer className="credits" aria-label="Asset credits">
+        <p>
+          &quot;Default osrs model&quot;{' '}
+          (<a
+            href="https://skfb.ly/pqGPF"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            https://skfb.ly/pqGPF
+          </a>) by pkzz is licensed under Creative Commons Attribution (
+          <a
+            href="http://creativecommons.org/licenses/by/4.0/"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            http://creativecommons.org/licenses/by/4.0/
+          </a>
+          ).
+        </p>
+      </footer>
     </main>
   )
 }

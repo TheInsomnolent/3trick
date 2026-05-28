@@ -20,3 +20,8 @@ npm run dev
 npm run lint
 npm run build
 ```
+
+## Credits
+
+"Default osrs model" (https://skfb.ly/pqGPF) by pkzz is licensed under
+Creative Commons Attribution (http://creativecommons.org/licenses/by/4.0/).
