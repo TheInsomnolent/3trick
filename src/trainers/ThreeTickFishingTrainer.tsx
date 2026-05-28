@@ -69,12 +69,18 @@ export function ThreeTickFishingTrainer({ onBack }: ThreeTickFishingTrainerProps
     otherTickVolume: 0.7,
   })
 
+  // Only count tick cycles while the player is actually harvesting (i.e.
+  // standing adjacent to and interacting with an active fishing spot). The
+  // GridSim notifies us when this state changes.
+  const [harvesting, setHarvesting] = useState(false)
+
   const engine = useTickEngine<ActionId>({
     trainerId: TRAINER_ID,
     pattern: PATTERN,
     tickMs: engineInputs.tickMs,
     tickOneVolume: engineInputs.tickOneVolume,
     otherTickVolume: engineInputs.otherTickVolume,
+    paused: !harvesting,
   })
 
   const difficulty = autoScale ? Math.min(1, engine.streak / 60) : 0
@@ -240,8 +246,9 @@ export function ThreeTickFishingTrainer({ onBack }: ThreeTickFishingTrainerProps
           initialPlayer={{ x: Math.floor(GRID_WIDTH / 2) - 1, y: Math.floor(GRID_HEIGHT / 2) }}
           tilesPerTick={2}
           tickMs={tickMs}
-          paused={!engine.isRunning}
+          paused={!engine.active}
           onSpotClick={() => engine.handleAction('spot')}
+          onHarvestingChange={setHarvesting}
         />
 
         <aside

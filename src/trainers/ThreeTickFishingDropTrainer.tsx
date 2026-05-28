@@ -87,12 +87,17 @@ export function ThreeTickFishingDropTrainer({ onBack }: ThreeTickFishingDropTrai
     otherTickVolume: 0.7,
   })
 
+  // Only count tick cycles while the player is actively harvesting (see
+  // ThreeTickFishingTrainer for the same gating pattern).
+  const [harvesting, setHarvesting] = useState(false)
+
   const engine = useTickEngine<ActionId>({
     trainerId: TRAINER_ID,
     pattern,
     tickMs: engineInputs.tickMs,
     tickOneVolume: engineInputs.tickOneVolume,
     otherTickVolume: engineInputs.otherTickVolume,
+    paused: !harvesting,
   })
 
   const difficulty = autoScale ? Math.min(1, engine.streak / 60) : 0
@@ -304,8 +309,9 @@ export function ThreeTickFishingDropTrainer({ onBack }: ThreeTickFishingDropTrai
           initialPlayer={{ x: Math.floor(GRID_WIDTH / 2) - 1, y: Math.floor(GRID_HEIGHT / 2) }}
           tilesPerTick={2}
           tickMs={tickMs}
-          paused={!engine.isRunning}
+          paused={!engine.active}
           onSpotClick={handleSpotClick}
+          onHarvestingChange={setHarvesting}
         />
 
         <aside
