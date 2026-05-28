@@ -473,8 +473,9 @@ export function GridSim({
   }, [])
 
   // Arrow keys: left/right pan yaw, up/down tilt pitch. Matches OSRS where
-  // the arrow keys move the camera around the player.
-  const ARROW_YAW_STEP = 32 // jagex units per keystroke (~5.6 degrees)
+  // the arrow keys move the camera around the player. Steps are in Jagex's
+  // 2048-unit circle, so 32 ≈ 360 * 32 / 2048 ≈ 5.6° per keystroke.
+  const ARROW_YAW_STEP = 32
   const ARROW_PITCH_STEP = 24
   const onKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     const cs = cameraStateRef.current
@@ -508,7 +509,7 @@ export function GridSim({
     <div
       ref={containerRef}
       className="grid-viewport"
-      style={{ width: VIEW_WIDTH, height: VIEW_HEIGHT, touchAction: 'none', outline: 'none' }}
+      style={{ width: VIEW_WIDTH, height: VIEW_HEIGHT, touchAction: 'none' }}
       tabIndex={0}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
