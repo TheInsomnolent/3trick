@@ -44,7 +44,6 @@ const ACTIONS: Record<ActionId, ActionDefinition> = {
 }
 
 interface ThreeTickFishingDropTrainerProps {
-  cursor?: string
   onBack: () => void
 }
 
@@ -53,7 +52,7 @@ interface InventoryPosition {
   bottom: number
 }
 
-export function ThreeTickFishingDropTrainer({ cursor, onBack }: ThreeTickFishingDropTrainerProps) {
+export function ThreeTickFishingDropTrainer({ onBack }: ThreeTickFishingDropTrainerProps) {
   const trainerMeta = findTrainer(TRAINER_ID)
 
   const [speedSlider, setSpeedSlider] = useState(0.55)
@@ -263,7 +262,7 @@ export function ThreeTickFishingDropTrainer({ cursor, onBack }: ThreeTickFishing
   }
 
   return (
-    <main className="trainer-screen" style={cursor ? { cursor } : undefined}>
+    <main className="trainer-screen">
       <TrainerHeader
         title="3-tick fishing w/ dropping fish"
         streak={engine.streak}

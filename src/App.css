@@ -171,50 +171,6 @@ button:disabled {
   margin: 0 auto;
 }
 
-.grid {
-  display: grid;
-  gap: 2px;
-  padding: 0.35rem;
-  transition: transform 0.15s linear;
-  will-change: transform;
-}
-
-.tile {
-  aspect-ratio: 1;
-  font-size: 0.7rem;
-  color: #b9dbc2;
-  border: 1px solid #2f4f3b;
-  background: rgba(31, 78, 47, 0.5);
-  border-radius: 0;
-}
-
-.tile.water {
-  background: rgba(34, 86, 150, 0.55);
-  border-color: #2d4d76;
-  color: #cfe2ff;
-  cursor: not-allowed;
-}
-
-.tile.active-spot {
-  background: #6be291;
-  border-color: #c5ffd7;
-  color: #123217;
-  font-weight: 700;
-}
-
-.tile.water.active-spot {
-  background: #5fc7ff;
-  border-color: #ffffff;
-  color: #0d1c3a;
-}
-
-.tile.player {
-  background: #f6cb6a;
-  border-color: #fff5c8;
-  color: #2b1f0a;
-  font-weight: 700;
-}
-
 .inventory {
   position: absolute;
   right: 0.5rem;

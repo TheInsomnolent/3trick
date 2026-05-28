@@ -3,12 +3,11 @@ import type { TrainerMeta } from '../trainers/types'
 interface MenuScreenProps {
   trainers: TrainerMeta[]
   onSelect: (trainer: TrainerMeta) => void
-  cursor?: string
 }
 
-export function MenuScreen({ trainers, onSelect, cursor }: MenuScreenProps) {
+export function MenuScreen({ trainers, onSelect }: MenuScreenProps) {
   return (
-    <main className="menu-screen" style={cursor ? { cursor } : undefined}>
+    <main className="menu-screen">
       <h1>3trick training dojo</h1>
       <p className="menu-subtitle">Pick a trainer from common OSRS tick manipulation methods.</p>
       <section className="trainer-list" aria-label="Trainer methods">
