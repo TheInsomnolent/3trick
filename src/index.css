@@ -1,0 +1,27 @@
+@font-face {
+  font-family: 'RuneScape';
+  src: url('./assets/fonts/runescape.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'RuneScape Bold';
+  src: url('./assets/fonts/runescape_bold.ttf') format('truetype');
+}
+
+:root {
+  color: #f5d38f;
+  background: #12100f;
+  font-family: 'RuneScape', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+#root {
+  min-height: 100vh;
+}
