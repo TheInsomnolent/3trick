@@ -8,6 +8,12 @@ export const TRAINERS: TrainerMeta[] = [
     enabled: true,
   },
   {
+    id: 'threeTickFishingDrop',
+    name: '3-tick fishing w/ dropping fish',
+    description: 'Drop sturgeon, then herb-tar + spot. Trains the variable drop tick.',
+    enabled: true,
+  },
+  {
     id: 'twoTickTeaks',
     name: '2-tick teaks',
     description: 'Coming soon',
