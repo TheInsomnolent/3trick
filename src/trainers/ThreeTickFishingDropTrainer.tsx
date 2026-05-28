@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { RunStats } from '../components/RunStats'
 import { TrainerControls } from '../components/TrainerControls'
 import { TrainerHeader } from '../components/TrainerHeader'
@@ -10,13 +10,22 @@ import { BASE_TICK_MS, clamp, segmentProgress } from '../utils'
 import { findTrainer } from './registry'
 import type { ActionDefinition } from './types'
 
-type ActionId = 'paste' | 'herb' | 'spot'
+type ActionId = 'drop' | 'paste' | 'herb' | 'spot'
 
-const TRAINER_ID = 'threeTickFishing'
+const TRAINER_ID = 'threeTickFishingDrop'
 const GRID_WIDTH = 20
 const GRID_HEIGHT = 14
+const STURGEON_DROP_CHANCE = 0.3
+// Sturgeon is added to the inventory three ticks after the spot click.
+const STURGEON_DELAY_TICKS = 3
+const STURGEON_ICON = 'https://static.runelite.net/cache/item/icon/331.png'
 
 const ACTIONS: Record<ActionId, ActionDefinition> = {
+  drop: {
+    label: 'Shift-click sturgeon',
+    icon: STURGEON_ICON,
+    description: 'Shift-click the sturgeon in your inventory to drop it.',
+  },
   paste: {
     label: 'Tap swamp paste',
     icon: 'https://static.runelite.net/cache/item/icon/1941.png',
@@ -34,9 +43,7 @@ const ACTIONS: Record<ActionId, ActionDefinition> = {
   },
 }
 
-const PATTERN: ActionId[][] = [['paste'], ['herb'], ['spot']]
-
-interface ThreeTickFishingTrainerProps {
+interface ThreeTickFishingDropTrainerProps {
   cursor?: string
   onBack: () => void
 }
@@ -46,7 +53,7 @@ interface InventoryPosition {
   bottom: number
 }
 
-export function ThreeTickFishingTrainer({ cursor, onBack }: ThreeTickFishingTrainerProps) {
+export function ThreeTickFishingDropTrainer({ cursor, onBack }: ThreeTickFishingDropTrainerProps) {
   const trainerMeta = findTrainer(TRAINER_ID)
 
   const [speedSlider, setSpeedSlider] = useState(0.55)
@@ -58,12 +65,23 @@ export function ThreeTickFishingTrainer({ cursor, onBack }: ThreeTickFishingTrai
   const [isDragging, setIsDragging] = useState(false)
   const dragOffsetRef = useRef<{ pointerX: number; pointerY: number; right: number; bottom: number } | null>(null)
 
+  // Sturgeon inventory state. We track whether the player currently holds a
+  // sturgeon (which makes the drop tick required) and any pending arrival
+  // ticks (so we can grant sturgeon exactly STURGEON_DELAY_TICKS after the
+  // matching spot click).
+  const [hasSturgeon, setHasSturgeon] = useState(false)
+  const pendingArrivalsRef = useRef<number[]>([])
+
   const terrain = useMemo(() => splitWaterRight(GRID_WIDTH), [])
 
-  // Difficulty / tick speed / volumes are derived from the engine's current
-  // streak. The engine takes tickMs as input, so updating streak naturally
-  // restarts the engine's interval on the next render (same feedback loop
-  // as before the refactor, when all of this lived in App.tsx).
+  // The pattern is dynamic: tick 1 only requires "drop" when the player is
+  // actually holding a sturgeon. Tick 2 requires paste *and* herb on the
+  // same tick. Tick 3 is the fishing spot click.
+  const pattern = useMemo<ActionId[][]>(
+    () => [hasSturgeon ? ['drop'] : [], ['paste', 'herb'], ['spot']],
+    [hasSturgeon],
+  )
+
   const [engineInputs, setEngineInputs] = useState({
     tickMs: BASE_TICK_MS / 0.55,
     tickOneVolume: 0.7,
@@ -72,7 +90,7 @@ export function ThreeTickFishingTrainer({ cursor, onBack }: ThreeTickFishingTrai
 
   const engine = useTickEngine<ActionId>({
     trainerId: TRAINER_ID,
-    pattern: PATTERN,
+    pattern,
     tickMs: engineInputs.tickMs,
     tickOneVolume: engineInputs.tickOneVolume,
     otherTickVolume: engineInputs.otherTickVolume,
@@ -98,6 +116,52 @@ export function ThreeTickFishingTrainer({ cursor, onBack }: ThreeTickFishingTrai
     setEngineInputs({ tickMs, tickOneVolume, otherTickVolume })
   }
 
+  // Reset sturgeon bookkeeping whenever a run starts/stops so a previous
+  // attempt doesn't leave the player erroneously holding fish (or expecting
+  // a delivery on tick 3 of the new run). Done during render to mirror the
+  // pattern used by ThreeTickFishingTrainer for engineInputs/selectedSlot.
+  const [trackedActive, setTrackedActive] = useState(engine.active)
+  if (trackedActive !== engine.active) {
+    setTrackedActive(engine.active)
+    if (!engine.active) {
+      setSelectedSlot(null)
+      setHasSturgeon(false)
+    }
+  }
+  useEffect(() => {
+    if (!engine.active) {
+      pendingArrivalsRef.current = []
+    }
+  }, [engine.active])
+
+  // Resolve sturgeon arrivals at each tick boundary. The engine's currentTick
+  // monotonically increases while running, so consuming any pending arrivals
+  // <= currentTick is enough to grant the fish at the right moment.
+  useEffect(() => {
+    if (!engine.isRunning) {
+      return
+    }
+    const pending = pendingArrivalsRef.current
+    if (pending.length === 0) {
+      return
+    }
+    const due = pending.filter((t) => t <= engine.currentTick)
+    if (due.length === 0) {
+      return
+    }
+    pendingArrivalsRef.current = pending.filter((t) => t > engine.currentTick)
+    setHasSturgeon(true)
+  }, [engine.currentTick, engine.isRunning])
+
+  const handleSpotClick = useCallback(() => {
+    engine.handleAction('spot')
+    if (Math.random() < STURGEON_DROP_CHANCE) {
+      pendingArrivalsRef.current = [
+        ...pendingArrivalsRef.current,
+        engine.currentTick + STURGEON_DELAY_TICKS,
+      ]
+    }
+  }, [engine])
 
   const handleInventoryItemClick = useCallback(
     (action: ActionId, event: React.MouseEvent<HTMLButtonElement>) => {
@@ -105,28 +169,28 @@ export function ThreeTickFishingTrainer({ cursor, onBack }: ThreeTickFishingTrai
       if (event.altKey) {
         return
       }
+      if (action === 'drop') {
+        // Drop is a shift-click only interaction; ignore plain clicks so the
+        // player can't accidentally drop the fish.
+        if (!event.shiftKey) {
+          return
+        }
+        if (!hasSturgeon) {
+          return
+        }
+        engine.handleAction('drop')
+        setHasSturgeon(false)
+        return
+      }
       engine.handleAction(action)
-      // Mirror OSRS "selected item" indicator: clicking paste flags it, the
-      // follow-up herb click consumes the selection.
       if (action === 'paste') {
         setSelectedSlot((prev) => (prev === 'paste' ? null : 'paste'))
       } else if (action === 'herb') {
         setSelectedSlot(null)
       }
     },
-    [engine],
+    [engine, hasSturgeon],
   )
-
-  // Reset the selection indicator whenever a run starts/stops so stale state
-  // from a previous attempt doesn't carry over visually. Done during render to
-  // avoid a redundant effect (mirrors how engineInputs is reconciled above).
-  const [trackedActive, setTrackedActive] = useState(engine.active)
-  if (trackedActive !== engine.active) {
-    setTrackedActive(engine.active)
-    if (!engine.active) {
-      setSelectedSlot(null)
-    }
-  }
 
   const handleInventoryPointerDown = useCallback(
     (event: React.PointerEvent<HTMLElement>) => {
@@ -180,7 +244,7 @@ export function ThreeTickFishingTrainer({ cursor, onBack }: ThreeTickFishingTrai
   )
 
   const shareBest = async () => {
-    const text = `My best ${trainerMeta?.name ?? '3-tick fishing'} streak is ${engine.bestStreak} ticks on 3trick!`
+    const text = `My best ${trainerMeta?.name ?? '3-tick fishing w/ drop'} streak is ${engine.bestStreak} ticks on 3trick!`
 
     try {
       if (navigator.share) {
@@ -201,7 +265,7 @@ export function ThreeTickFishingTrainer({ cursor, onBack }: ThreeTickFishingTrai
   return (
     <main className="trainer-screen" style={cursor ? { cursor } : undefined}>
       <TrainerHeader
-        title="3-tick fishing trainer"
+        title="3-tick fishing w/ dropping fish"
         streak={engine.streak}
         bestStreak={engine.bestStreak}
         onBack={onBack}
@@ -224,7 +288,7 @@ export function ThreeTickFishingTrainer({ cursor, onBack }: ThreeTickFishingTrai
       />
 
       <VisualMetronome<ActionId>
-        pattern={PATTERN}
+        pattern={pattern}
         currentTick={engine.currentTick}
         isRunning={engine.isRunning}
         tickStatuses={engine.tickStatuses}
@@ -242,7 +306,7 @@ export function ThreeTickFishingTrainer({ cursor, onBack }: ThreeTickFishingTrai
           tilesPerTick={2}
           tickMs={tickMs}
           paused={!engine.isRunning}
-          onSpotClick={() => engine.handleAction('spot')}
+          onSpotClick={handleSpotClick}
         />
 
         <aside
@@ -279,6 +343,20 @@ export function ThreeTickFishingTrainer({ cursor, onBack }: ThreeTickFishingTrai
                     onClick={(event) => handleInventoryItemClick('paste', event)}
                   >
                     <img src="https://static.runelite.net/cache/item/icon/1941.png" alt="Swamp paste" />
+                  </button>
+                )
+              }
+
+              if (index === 2 && hasSturgeon) {
+                return (
+                  <button
+                    key={index}
+                    type="button"
+                    className="slot item sturgeon"
+                    title="Shift-click to drop"
+                    onClick={(event) => handleInventoryItemClick('drop', event)}
+                  >
+                    <img src={STURGEON_ICON} alt="Sturgeon" />
                   </button>
                 )
               }

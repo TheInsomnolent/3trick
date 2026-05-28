@@ -1,4 +1,8 @@
-export type TrainerId = 'threeTickFishing' | 'twoTickTeaks' | 'onePointFiveT'
+export type TrainerId =
+  | 'threeTickFishing'
+  | 'threeTickFishingDrop'
+  | 'twoTickTeaks'
+  | 'onePointFiveT'
 export type TickStatus = 'pending' | 'success' | 'failed'
 
 export interface TrainerMeta {
