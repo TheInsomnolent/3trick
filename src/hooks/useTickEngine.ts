@@ -75,8 +75,9 @@ export function useTickEngine<ActionId extends string>({
   }, [handledActions])
 
   const playTick = useCallback(
-    (isPrimary: boolean) => {
-      const scopedVolume = isPrimary ? tickOneVolume : otherTickVolume
+    (isPrimary: boolean, intensity: number = 1) => {
+      const baseVolume = isPrimary ? tickOneVolume : otherTickVolume
+      const scopedVolume = baseVolume * intensity
       if (scopedVolume <= 0) {
         return
       }
@@ -102,6 +103,28 @@ export function useTickEngine<ActionId extends string>({
     [otherTickVolume, tickOneVolume],
   )
 
+  const playTickRef = useRef(playTick)
+  useEffect(() => {
+    playTickRef.current = playTick
+  }, [playTick])
+
+  const scheduleSubticks = useCallback(
+    (isPrimary: boolean, subtickCount: number) => {
+      if (subtickCount <= 1) {
+        return
+      }
+      const interval = tickMs / subtickCount
+      for (let i = 1; i < subtickCount; i += 1) {
+        // Each subsequent subtick is quieter than the previous one.
+        const intensity = 1 / (i + 1)
+        window.setTimeout(() => {
+          playTickRef.current(isPrimary, intensity)
+        }, interval * i)
+      }
+    },
+    [tickMs],
+  )
+
   useEffect(() => {
     if (!active) {
       return
@@ -120,7 +143,10 @@ export function useTickEngine<ActionId extends string>({
         const activePattern = patternRef.current
         const nextTick = next - COUNT_IN_TICKS
         const tickInPattern = nextTick % activePattern.length
-        playTick(tickInPattern === 0)
+        const isPrimary = tickInPattern === 0
+        playTick(isPrimary)
+        const requiredThisTick = activePattern[tickInPattern] ?? []
+        scheduleSubticks(isPrimary, requiredThisTick.length)
 
         if (nextTick === 0) {
           setHandledActions([])
@@ -161,7 +187,7 @@ export function useTickEngine<ActionId extends string>({
     }, tickMs)
 
     return () => window.clearInterval(timer)
-  }, [active, playTick, tickMs])
+  }, [active, playTick, scheduleSubticks, tickMs])
 
   const handleAction = useCallback(
     (action: ActionId) => {
