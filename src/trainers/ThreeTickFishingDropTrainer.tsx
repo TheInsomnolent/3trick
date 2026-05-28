@@ -55,7 +55,7 @@ interface InventoryPosition {
 export function ThreeTickFishingDropTrainer({ onBack }: ThreeTickFishingDropTrainerProps) {
   const trainerMeta = findTrainer(TRAINER_ID)
 
-  const [speedSlider, setSpeedSlider] = useState(0.55)
+  const [speedSlider, setSpeedSlider] = useState(1)
   const [volume, setVolume] = useState(0.7)
   const [visualVisibility, setVisualVisibility] = useState(1)
   const [autoScale, setAutoScale] = useState(true)
@@ -82,7 +82,7 @@ export function ThreeTickFishingDropTrainer({ onBack }: ThreeTickFishingDropTrai
   )
 
   const [engineInputs, setEngineInputs] = useState({
-    tickMs: BASE_TICK_MS / 0.55,
+    tickMs: BASE_TICK_MS,
     tickOneVolume: 0.7,
     otherTickVolume: 0.7,
   })

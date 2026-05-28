@@ -48,7 +48,7 @@ interface InventoryPosition {
 export function ThreeTickFishingTrainer({ onBack }: ThreeTickFishingTrainerProps) {
   const trainerMeta = findTrainer(TRAINER_ID)
 
-  const [speedSlider, setSpeedSlider] = useState(0.55)
+  const [speedSlider, setSpeedSlider] = useState(1)
   const [volume, setVolume] = useState(0.7)
   const [visualVisibility, setVisualVisibility] = useState(1)
   const [autoScale, setAutoScale] = useState(true)
@@ -64,7 +64,7 @@ export function ThreeTickFishingTrainer({ onBack }: ThreeTickFishingTrainerProps
   // restarts the engine's interval on the next render (same feedback loop
   // as before the refactor, when all of this lived in App.tsx).
   const [engineInputs, setEngineInputs] = useState({
-    tickMs: BASE_TICK_MS / 0.55,
+    tickMs: BASE_TICK_MS,
     tickOneVolume: 0.7,
     otherTickVolume: 0.7,
   })
