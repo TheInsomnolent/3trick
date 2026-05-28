@@ -31,6 +31,16 @@ const PITCH_MAX_JAGEX = 512
 const ZOOM_MIN = 3
 const ZOOM_MAX = 25
 
+// Arrow keys held in the viewport rotate the camera around the player; we
+// track them in a Set keyed by KeyboardEvent.key so the camera rig can
+// apply continuous rotation per frame.
+const ARROW_KEYS: ReadonlySet<string> = new Set([
+  'ArrowLeft',
+  'ArrowRight',
+  'ArrowUp',
+  'ArrowDown',
+])
+
 const DEFAULT_PITCH_JAGEX = 280
 const DEFAULT_YAW_JAGEX = 0
 const DEFAULT_ZOOM = 12
@@ -224,6 +234,39 @@ function ClickPlane({
 }
 
 /**
+ * Advances the tick state up to the given timestamp, dropping any segments
+ * whose end time has passed and updating the resting tile. Returns the
+ * current visual position (in tile space, including the +0.5 centering) and
+ * the desired facing yaw if the player is in motion. Shared between the
+ * FBX-backed PlayerMesh and its loading fallback.
+ */
+function readTickStateAt(
+  tickState: PlayerTickState,
+  now: number,
+): { px: number; pz: number; desiredYaw: number | null } {
+  const segments = tickState.segments
+  while (segments.length > 0 && segments[0].startMs + segments[0].durMs <= now) {
+    const done = segments.shift()!
+    tickState.rest = done.to
+  }
+  if (segments.length === 0) {
+    return {
+      px: tickState.rest.x + 0.5,
+      pz: tickState.rest.y + 0.5,
+      desiredYaw: null,
+    }
+  }
+  const seg = segments[0]
+  const t = now < seg.startMs ? 0 : clamp((now - seg.startMs) / seg.durMs, 0, 1)
+  const px = seg.from.x + (seg.to.x - seg.from.x) * t + 0.5
+  const pz = seg.from.y + (seg.to.y - seg.from.y) * t + 0.5
+  const dx = seg.to.x - seg.from.x
+  const dz = seg.to.y - seg.from.y
+  const desiredYaw = dx !== 0 || dz !== 0 ? Math.atan2(dx, dz) : null
+  return { px, pz, desiredYaw }
+}
+
+/**
  * Player model. Decoupled from React state: reads the queued movement
  * segments from a ref and advances tile-by-tile, so multi-tile ticks
  * (running) animate through every intermediate tile instead of cutting a
@@ -270,32 +313,10 @@ function PlayerMesh({
   const facingYawRef = useRef(0)
 
   useFrame((_, delta) => {
-    const now = performance.now()
-    const state = tickStateRef.current
-    const segments = state.segments
-    // Drop fully-completed segments; remember the last tile we stopped on.
-    while (segments.length > 0 && segments[0].startMs + segments[0].durMs <= now) {
-      const done = segments.shift()!
-      state.rest = done.to
-    }
-
-    let px: number
-    let pz: number
-    let desiredYaw: number | null = null
-    if (segments.length === 0) {
-      px = state.rest.x + 0.5
-      pz = state.rest.y + 0.5
-    } else {
-      const seg = segments[0]
-      const t = now < seg.startMs ? 0 : clamp((now - seg.startMs) / seg.durMs, 0, 1)
-      px = seg.from.x + (seg.to.x - seg.from.x) * t + 0.5
-      pz = seg.from.y + (seg.to.y - seg.from.y) * t + 0.5
-      const dx = seg.to.x - seg.from.x
-      const dz = seg.to.y - seg.from.y
-      if (dx !== 0 || dz !== 0) {
-        desiredYaw = Math.atan2(dx, dz)
-      }
-    }
+    const { px, pz, desiredYaw } = readTickStateAt(
+      tickStateRef.current,
+      performance.now(),
+    )
 
     // Critically-damped-ish yaw smoothing toward the desired direction.
     if (desiredYaw !== null) {
@@ -328,24 +349,7 @@ function PlayerMeshFallback({
 }) {
   const meshRef = useRef<THREE.Mesh>(null!)
   useFrame(() => {
-    const now = performance.now()
-    const state = tickStateRef.current
-    const segments = state.segments
-    while (segments.length > 0 && segments[0].startMs + segments[0].durMs <= now) {
-      const done = segments.shift()!
-      state.rest = done.to
-    }
-    let px: number
-    let pz: number
-    if (segments.length === 0) {
-      px = state.rest.x + 0.5
-      pz = state.rest.y + 0.5
-    } else {
-      const seg = segments[0]
-      const t = now < seg.startMs ? 0 : clamp((now - seg.startMs) / seg.durMs, 0, 1)
-      px = seg.from.x + (seg.to.x - seg.from.x) * t + 0.5
-      pz = seg.from.y + (seg.to.y - seg.from.y) * t + 0.5
-    }
+    const { px, pz } = readTickStateAt(tickStateRef.current, performance.now())
     meshRef.current.position.set(px, PLAYER_HEIGHT / 2, pz)
     targetRef.current.set(px, 0, pz)
   })
@@ -512,7 +516,10 @@ export function GridSim({
       // the model lags the true tile by ~1 tick when walking and up to
       // ~2 ticks when running — matching OSRS character-model behaviour.
       const ts = tickStateRef.current
-      const segDur = Math.max(1, tickMsRef.current / Math.max(1, tilesPerTick))
+      // Guard against pathological tilesPerTick / tickMs values producing
+      // zero- or negative-duration segments (which would make the lerp NaN).
+      const stepsPerTick = Math.max(1, tilesPerTick)
+      const segDur = Math.max(1, tickMsRef.current / stepsPerTick)
       const now = performance.now()
       const lastSeg = ts.segments[ts.segments.length - 1]
       const lastEnd = lastSeg ? lastSeg.startMs + lastSeg.durMs : now
@@ -657,17 +664,13 @@ export function GridSim({
   // rotation from the OS key-repeat cadence, making it smooth and quicker
   // than per-keystroke jumps.
   const arrowKeysRef = useRef<Set<string>>(new Set())
-  const ARROW_KEYS = useMemo(
-    () => new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']),
-    [],
-  )
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       if (!ARROW_KEYS.has(event.key)) return
       arrowKeysRef.current.add(event.key)
       event.preventDefault()
     },
-    [ARROW_KEYS],
+    [],
   )
   const onKeyUp = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -675,7 +678,7 @@ export function GridSim({
       arrowKeysRef.current.delete(event.key)
       event.preventDefault()
     },
-    [ARROW_KEYS],
+    [],
   )
   // Release any held keys if the viewport loses focus, otherwise the camera
   // would keep rotating after the user tabs away.
