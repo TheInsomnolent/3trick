@@ -1,5 +1,4 @@
-import { useMemo, useState } from 'react'
-import { abyssalWhip, toDataUrl } from '@dava96/osrs-icons'
+import { useState } from 'react'
 import { MenuScreen } from './components/MenuScreen'
 import { ThreeTickFishingTrainer } from './trainers/ThreeTickFishingTrainer'
 import { ThreeTickFishingDropTrainer } from './trainers/ThreeTickFishingDropTrainer'
@@ -9,20 +8,18 @@ import './App.css'
 
 function App() {
   const [trainerId, setTrainerId] = useState<TrainerId | null>(null)
-  const osrsCursor = useMemo(() => `url(${toDataUrl(abyssalWhip)}) 2 2, auto`, [])
 
   if (trainerId === 'threeTickFishing') {
-    return <ThreeTickFishingTrainer cursor={osrsCursor} onBack={() => setTrainerId(null)} />
+    return <ThreeTickFishingTrainer onBack={() => setTrainerId(null)} />
   }
 
   if (trainerId === 'threeTickFishingDrop') {
-    return <ThreeTickFishingDropTrainer cursor={osrsCursor} onBack={() => setTrainerId(null)} />
+    return <ThreeTickFishingDropTrainer onBack={() => setTrainerId(null)} />
   }
 
   return (
     <MenuScreen
       trainers={TRAINERS}
-      cursor={osrsCursor}
       onSelect={(trainer) => setTrainerId(trainer.id)}
     />
   )
