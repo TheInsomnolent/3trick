@@ -1,0 +1,241 @@
+.menu-screen,
+.trainer-screen {
+  min-height: 100vh;
+  background: radial-gradient(circle at top, #2c2d25 0%, #12100f 65%);
+  color: #f5d38f;
+  padding: 1rem;
+}
+
+h1,
+h2,
+button,
+label,
+input {
+  font-family: 'RuneScape', 'RuneScape Bold', sans-serif;
+}
+
+.menu-screen {
+  display: grid;
+  place-content: center;
+  gap: 1rem;
+}
+
+.menu-subtitle {
+  text-align: center;
+  color: #d2bf95;
+}
+
+.trainer-list {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  width: min(900px, 100%);
+}
+
+.trainer-card {
+  background: #24211c;
+  color: #f5d38f;
+  border: 2px solid #78643d;
+  border-radius: 6px;
+  padding: 0.9rem;
+  display: grid;
+  gap: 0.4rem;
+  text-align: left;
+}
+
+.trainer-card:disabled {
+  opacity: 0.45;
+}
+
+.top-bar {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.streak {
+  background: #312a1f;
+  border: 1px solid #7b6740;
+  border-radius: 4px;
+  padding: 0.35rem 0.6rem;
+}
+
+button {
+  border: 1px solid #7b6740;
+  border-radius: 4px;
+  background: #2f281d;
+  color: #f5d38f;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.controls {
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  background: #1b1814;
+  border: 1px solid #5f4f32;
+  border-radius: 6px;
+  padding: 0.8rem;
+}
+
+.controls label {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.9rem;
+}
+
+.controls .toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.visual-metronome {
+  margin: 0.8rem 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 0.6rem;
+}
+
+.metronome-tick {
+  background: #1c1a16;
+  border: 1px solid #5f4f32;
+  border-radius: 6px;
+  padding: 0.45rem;
+}
+
+.metronome-tick.current {
+  border-color: #f6cb6a;
+  box-shadow: 0 0 0 1px #f6cb6a inset;
+}
+
+.tick-label {
+  font-size: 0.85rem;
+  margin-bottom: 0.3rem;
+}
+
+.tick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.tick-action {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 4px;
+  border: 1px solid #605338;
+  padding: 0.25rem;
+  font-size: 0.8rem;
+  background: #2c261d;
+}
+
+.tick-action img {
+  width: 24px;
+  height: 24px;
+  image-rendering: pixelated;
+}
+
+.tick-action.success {
+  background: #224322;
+  border-color: #57b157;
+}
+
+.tick-action.failed {
+  background: #4b2323;
+  border-color: #c86767;
+}
+
+.wait {
+  font-size: 0.8rem;
+  opacity: 0.85;
+}
+
+.arena {
+  position: relative;
+  min-height: 54vh;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(14, minmax(34px, 1fr));
+  gap: 2px;
+  background: #0e2616;
+  border: 1px solid #324836;
+  border-radius: 6px;
+  padding: 0.35rem;
+}
+
+.tile {
+  min-height: 40px;
+  font-size: 0.6rem;
+  color: #b9dbc2;
+  border: 1px solid #2f4f3b;
+  background: rgba(31, 78, 47, 0.5);
+}
+
+.tile.semi {
+  background: rgba(95, 181, 117, 0.34);
+}
+
+.tile.active-spot {
+  background: #6be291;
+  border-color: #c5ffd7;
+  color: #123217;
+  font-weight: 700;
+}
+
+.inventory {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  width: 210px;
+  background: #332c22;
+  border: 2px solid #7d6640;
+  border-radius: 8px;
+  padding: 0.45rem;
+}
+
+.inventory-title {
+  margin-bottom: 0.35rem;
+  font-size: 0.9rem;
+}
+
+.inventory-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2px;
+}
+
+.slot {
+  aspect-ratio: 1;
+  border: 1px solid #695638;
+  background: #1d1a16;
+}
+
+.slot.item {
+  display: grid;
+  place-items: center;
+}
+
+.slot img {
+  width: 30px;
+  height: 30px;
+  image-rendering: pixelated;
+}
+
+.stats {
+  margin-top: 0.8rem;
+  background: #191611;
+  border: 1px solid #665334;
+  border-radius: 6px;
+  padding: 0.65rem;
+}
