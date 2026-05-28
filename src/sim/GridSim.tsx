@@ -201,6 +201,8 @@ function PlayerMesh({
 }) {
   const meshRef = useRef<THREE.Mesh>(null!)
   useFrame(() => {
+    // Note: grid Position uses (x, y) but in our right-handed Y-up scene the
+    // grid lies on the XZ plane, so Position.y is the world Z axis.
     const { prev, current, startedAt } = tickStateRef.current
     const dur = Math.max(1, tickMsRef.current)
     const t = clamp((performance.now() - startedAt) / dur, 0, 1)
